@@ -1,0 +1,14 @@
+{
+  "name": "sells-menu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline dashboard for new and seasonal menu sales",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "test": "node scripts/test.cjs",
+    "check": "npm run build && npm test",
+    "start": "node scripts/serve.cjs",
+    "example": "node scripts/generate-example.cjs"
+  }
+}

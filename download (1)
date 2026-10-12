@@ -1,0 +1,11 @@
+node_modules/
+private/
+tmp/
+*.xlsx
+*.xls
+*.csv
+*.tsv
+Меню_Продажи_дашборд*.html
+*.log
+.DS_Store
+Thumbs.db
