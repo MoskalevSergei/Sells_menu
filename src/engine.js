@@ -221,7 +221,7 @@ const MenuEngine = (() => {
     if(!sheets['Рестораны_Блюдо'])throw Error('Нужен лист «Рестораны_Блюдо» со столбцами «Код» и «Ресторан» для списка запусков.');
     return buildDataset(sheets,file.name,date1904);
   }
-  function defaults(D){return {start:D.minDate,end:D.maxDate,type:'all',window:0,rankingMethod:D.menuItems?'weights':'classic',restaurants:new Set(D.restaurants.map((_,i)=>i)),channels:new Set(D.channels.map((_,i)=>i)),launches:new Set(D.dishes.map(d=>d.start)),groups:new Set(D.dishes.map(d=>d.group)),dishes:new Set(D.dishes.map((_,i)=>i))};}
+  function defaults(D){return {start:D.minDate,end:D.maxDate,type:'all',window:0,rankingMethod:'before',restaurants:new Set(D.restaurants.map((_,i)=>i)),channels:new Set(D.channels.map((_,i)=>i)),launches:new Set(D.dishes.map(d=>d.start)),groups:new Set(D.dishes.map(d=>d.group)),dishes:new Set(D.dishes.map((_,i)=>i))};}
   const availabilityCache=new WeakMap();
   function availabilityFor(D){
     if(availabilityCache.has(D))return availabilityCache.get(D);

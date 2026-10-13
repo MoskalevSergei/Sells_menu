@@ -24,7 +24,7 @@ function fixture({local = 100, ownNew = 20, delivery = false} = {}) {
   });
 }
 function target(data, onlyTarget = false) {
-  const filters = E.defaults(data);
+  const filters = {...E.defaults(data), rankingMethod:'weights'};
   if (onlyTarget) filters.restaurants = new Set([data.restaurants.indexOf('Цель')]);
   return E.benchmark(data, filters).find(row => row.name === 'Цель');
 }

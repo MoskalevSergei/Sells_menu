@@ -72,7 +72,7 @@ test('A SPR dish not launched at the target can provide its ordinary comparable 
   s['Рестораны_Блюдо']=s['Рестораны_Блюдо'].filter((r,i)=>i===0||r[2]!==303);
   s['Рестораны_Блюдо'].push(['Обычное','База 1',303],['Обычное','База 2',303]);
   delete s['Поток продаж_до'];delete s['Поток чеков_до'];
-  const D=E.buildDataset(s),f=E.defaults(D);f.dishes=new Set([0]);f.restaurants=new Set([D.restaurants.indexOf('Цель')]);
+  const D=E.buildDataset(s),f={...E.defaults(D),rankingMethod:'weights'};f.dishes=new Set([0]);f.restaurants=new Set([D.restaurants.indexOf('Цель')]);
   const row=E.benchmark(D,f)[0];close(row.qty,20);close(row.expectedQty,20);close(row.coverage,100);
   assert.equal(row.details[0].comparisonGroupQty,100);
 });
