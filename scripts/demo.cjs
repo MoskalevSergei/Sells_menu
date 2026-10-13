@@ -23,6 +23,18 @@ function demoSheets(){
     if(r===1&&day===8)add('Локальное обычное блюдо',restaurant,'Зал',date,'Супы',7);
     if(r===3&&day>=12){orders.push([restaurant,'Заказы с собой',date,5]);if(day===18)add('Сезонное блюдо 1',restaurant,'Заказы с собой',date,'Супы',1);}
   }
-  return {'СПР':spr,'Поток продаж':sales,'Поток чеков':orders};
+  const beforeSales=[['Позиция меню (блюдо)','Ресторан','Подразделение','Дата','Группа меню','Позиций']];
+  const beforeOrders=[['Ресторан','Подразделение','Дата','Кол-во','Кол-во'],[null,null,null,'заказов,','позиций'],[null,null,null,'шт.','шт.']];
+  for(let offset=-14;offset<0;offset++)for(let r=1;r<=3;r++){
+    const date=new Date(Date.UTC(2026,0,5+offset)).toISOString().slice(0,10),restaurant='Ресторан '+r;
+    const channels=r===1?['Зал','Интернет-магазин']:r===2?['Зал','Интернет-магазин','Агрегаторы-доставки']:['Зал'];
+    for(const ch of channels){
+      const hall=ch==='Зал',volume=hall?3:1,orders=(hall?60:18)+r*7;
+      beforeOrders.push([restaurant,ch,date,orders,orders*2]);
+      for(const [group,name,q] of [['Супы','Обычный суп 1',9+r],['Супы','Обычный суп 2',6+r],['Салаты/Закуски','Обычный салат 1',8+r],['Салаты/Закуски','Обычный салат 2',5+r],['Завтрак','Обычный завтрак 1',7+r],['Завтрак','Обычный завтрак 2',4+r]])beforeSales.push([name,restaurant,ch,date,group,volume*q]);
+      if(r===1&&ch==='Зал')beforeSales.push(['Только в прежнем меню',restaurant,ch,date,'Супы',2]);
+    }
+  }
+  return {'СПР':spr,'Поток продаж':sales,'Поток чеков':orders,'Поток продаж_до':beforeSales,'Поток чеков_до':beforeOrders};
 }
 module.exports={demoSheets};

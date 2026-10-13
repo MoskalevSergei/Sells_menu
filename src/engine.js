@@ -15,7 +15,31 @@ const MenuEngine = (() => {
   function channel(x){const s=key(x);if(['зал','летняя терраса','без тарелок'].includes(s))return 'Зал';if(['инернет-магазин','интернет-магазин','интернет магазин'].includes(s))return 'Интернет-магазин';if(['агрегаторы-доставки','агрегаторы','агрегаторы доставки'].includes(s))return 'Агрегаторы';if(['заказы с собой','с собой'].includes(s))return 'С собой';return norm(x);}
   function header(rows,required){const i=rows.slice(0,12).findIndex(row=>required.every(aliases=>row.some(v=>aliases.includes(key(v)))));if(i<0)throw Error('Не найдены обязательные заголовки: '+required.map(x=>x[0]).join(', '));return i;}
   function column(row,aliases,required=true){const i=row.findIndex(v=>aliases.includes(key(v)));if(i<0&&required)throw Error('Не найден столбец «'+aliases[0]+'».');return i;}
+  function sheetRole(name){
+    const roles={'спр':'СПР','поток продаж':'Поток продаж','поток чеков':'Поток чеков','потокчеков':'ПотокЧеков','поток продаж до':'Поток продаж_до','поток чеков до':'Поток чеков_до'};
+    return roles[key(name).replace(/_/g,' ').replace(/\s+/g,' ')];
+  }
+  function sourceSheets(sheets){
+    const result={};
+    for(const [name,rows] of Object.entries(sheets)){
+      const role=sheetRole(name);if(!role)continue;
+      if(result[role])throw Error('Неоднозначные источники листа «'+role+'». Оставьте один источник.');
+      result[role]=rows;
+    }
+    return result;
+  }
+  function orderColumn(rows,hi){
+    const row=rows[hi],explicit=column(row,['заказы','кол-во заказов','количество заказов'],false);
+    if(explicit>=0)return explicit;
+    const candidates=row.map((v,i)=>key(v)==='кол-во'&&rows.slice(hi+1,hi+4).some(r=>key(r[i]).includes('заказ'))?i:-1).filter(i=>i>=0);
+    if(candidates.length>1)throw Error('Неоднозначные столбцы количества заказов.');
+    if(candidates.length)return candidates[0];
+    const fallback=row.map((v,i)=>key(v)==='кол-во'?i:-1).filter(i=>i>=0);
+    if(fallback.length!==1)throw Error('Не найден однозначный столбец количества заказов.');
+    return fallback[0];
+  }
   function buildDataset(sheets,sourceName='Меню_Продажи.xlsx',date1904=false){
+    sheets=sourceSheets(sheets);
     const spr=sheets['СПР'],flow=sheets['Поток продаж'],checks=sheets['Поток чеков']||sheets['ПотокЧеков'];
     if(!spr||!flow||!checks)throw Error('Нужны листы «СПР», «Поток продаж» и «Поток чеков» (или «ПотокЧеков»).');
     const hi=header(spr,[['позиция'],['группа'],['новое'],['старт']]),sh=spr[hi];
@@ -36,11 +60,11 @@ const MenuEngine = (() => {
     const groupQtySwapped=fi.group>=0&&sample.length>0&&sample.every(r=>number(r[fi.qty])===null&&norm(r[fi.qty])&&number(r[fi.group])!==null);
     if(groupQtySwapped)[fi.qty,fi.group]=[fi.group,fi.qty];
     const groupNames=new Map(dishes.map(d=>[key(d.group),d.group])),menuItems=[],menuItemMap=new Map(),menuSaleMap=new Map(),menuAvailabilitySet=new Set();
-    const saleMap=new Map(),availabilitySet=new Set(),restaurants=new Set(),channels=new Set();let rawSales=0,unknownSales=0,beforeStart=0,ordinaryRows=0,otherGroupRows=0;const unknownNames=new Set();
+    const saleMap=new Map(),availabilitySet=new Set(),restaurants=new Set(),channels=new Set(),mainSalesDates=new Set();let rawSales=0,unknownSales=0,beforeStart=0,ordinaryRows=0,otherGroupRows=0;const unknownNames=new Set();
     for(let n=fh+1;n<flow.length;n++){
       const r=flow[n];if(!norm(r[fi.name])||/^(итог|общий итог)$/i.test(norm(r[fi.name])))continue;
       const restaurant=norm(r[fi.restaurant]),ch=channel(r[fi.channel]),dt=date(r[fi.date],date1904),qty=number(r[fi.qty]);
-      if(!restaurant||!ch||!dt||qty===null)throw Error('Поток продаж, строка '+(n+1)+': не заполнен ресторан, канал, дата или количество.');rawSales++;
+      if(!restaurant||!ch||!dt||qty===null)throw Error('Поток продаж, строка '+(n+1)+': не заполнен ресторан, канал, дата или количество.');rawSales++;mainSalesDates.add(dt);
       const di=codeMap.get(norm(r[fi.code]))??aliasMap.get(key(r[fi.name]))??aliasMap.get(key(r[fi.corrected]));
       if(di!==undefined&&dt<dishes[di].start){beforeStart++;continue;}
       if(fi.group>=0){
@@ -58,9 +82,7 @@ const MenuEngine = (() => {
       restaurants.add(restaurant);channels.add(ch);const k=JSON.stringify([di,restaurant,ch,dt]);saleMap.set(k,(saleMap.get(k)||0)+qty);if(qty>0)availabilitySet.add(JSON.stringify([di,restaurant,ch]));
     }
     const ch=header(checks,[['ресторан'],['подразделение','кп'],['дата']]),c=checks[ch];
-    const explicitOrderColumn=column(c,['заказы','кол-во заказов','количество заказов'],false);
-    const multirowOrderColumn=c.findIndex((v,i)=>key(v)==='кол-во'&&checks.slice(ch+1,ch+4).some(row=>key(row[i]).includes('заказ')));
-    const ci={restaurant:column(c,['ресторан']),channel:column(c,['подразделение','кп']),date:column(c,['дата']),orders:explicitOrderColumn>=0?explicitOrderColumn:multirowOrderColumn>=0?multirowOrderColumn:column(c,['заказы','кол-во','кол-во заказов','количество заказов'])};
+    const ci={restaurant:column(c,['ресторан']),channel:column(c,['подразделение','кп']),date:column(c,['дата']),orders:orderColumn(checks,ch)};
     const orderMap=new Map();let rawOrders=0;
     for(let n=ch+1;n<checks.length;n++){
       const r=checks[n],restaurant=norm(r[ci.restaurant]);if(!restaurant||/^(итог|общий итог)$/i.test(restaurant))continue;
@@ -80,9 +102,51 @@ const MenuEngine = (() => {
     const minDate=orderDates[0],maxDate=orderDates.at(-1),salesMaxDate=saleDates.at(-1)||maxDate;
     const availability=[...availabilitySet].map(k=>{const [d,r,c]=JSON.parse(k);return[d,ri.get(r),cci.get(c)];});
     const menuSales=[...menuSaleMap].map(([k,q])=>{const [i,r,c,dt]=JSON.parse(k);return[i,ri.get(r),cci.get(c),dt,q];}),menuAvailability=[...menuAvailabilitySet].map(k=>{const [i,r,c]=JSON.parse(k);return[i,ri.get(r),cci.get(c)];});
-    return {schema:fi.group>=0?2:1,sourceName,loadedAt:new Date().toISOString(),dishes,restaurants:restaurantList,channels:channelList,sales,orders,availability,minDate,maxDate,
+    const dataset={schema:fi.group>=0?2:1,sourceName,loadedAt:new Date().toISOString(),dishes,restaurants:restaurantList,channels:channelList,sales,orders,availability,minDate,maxDate,
       ...(fi.group>=0?{menuItems,menuSales,menuAvailability,missingOrderSales:missingOrderSales.map(([d,r,c,dt])=>[d,ri.get(r),cci.get(c),dt])}:{}),
       audit:{rawSales,rawOrders,combinedSales:sales.length,combinedOrders:orders.length,unknownSales,unknownNames:[...unknownNames],beforeStart,skippedSpr,checksSource:sheets['Поток чеков']?'Поток чеков':'ПотокЧеков',salesMaxDate,ordersMaxDate:maxDate,...(fi.group>=0?{ordinaryRows,otherGroupRows,groupQtySwapped,menuItems:menuItems.length,menuRows:menuSales.length}: {})}};
+    dataset.history=buildHistory(dataset,sheets,aliasMap,codeMap,date1904,[...mainSalesDates]);
+    return dataset;
+  }
+  // Additional sources are serialized separately. They never extend the current assortment or filters.
+  function buildHistory(D,sheets,aliasMap,codeMap,date1904,mainSalesDates){
+    const items=(D.menuItems||[]).map(i=>({...i})),itemIds=new Map(items.map((i,n)=>[JSON.stringify([key(i.group),key(i.name)]),n]));
+    const restaurantNames=new Map(D.restaurants.map(r=>[key(r),r])),groupNames=new Map(D.dishes.map(d=>[key(d.group),d.group]));
+    const sales=new Map(),orders=new Map(),salesDates=new Set();
+    const audit={rawSales:0,rawOrders:0,prematureSales:0,groupQtySwapped:false};
+    const flow=sheets['Поток продаж_до'],checks=sheets['Поток чеков_до'];
+    if(flow){
+      const hi=header(flow,[['ресторан'],['подразделение','кп'],['позиций','количество'],['дата_отчет','дата отчёт','дата']]),h=flow[hi];
+      const ix={name:column(h,['позиция меню (блюдо)','позиция','блюдо']),corrected:column(h,['позиция с коррект','позиция с корректировкой'],false),code:column(h,['код','код позиции'],false),restaurant:column(h,['ресторан']),channel:column(h,['подразделение','кп']),date:column(h,['дата_отчет','дата отчёт','дата']),qty:column(h,['позиций','количество']),group:column(h,['группа','группа меню'])};
+      const sample=flow.slice(hi+1,hi+101).filter(r=>norm(r[ix.name]));
+      if(sample.length&&sample.every(r=>number(r[ix.qty])===null&&norm(r[ix.qty])&&number(r[ix.group])!==null)){[ix.qty,ix.group]=[ix.group,ix.qty];audit.groupQtySwapped=true;}
+      for(let n=hi+1;n<flow.length;n++){
+        const row=flow[n];if(!norm(row[ix.name])||/^(итог|общий итог)$/i.test(norm(row[ix.name])))continue;
+        const rawRestaurant=norm(row[ix.restaurant]),r=restaurantNames.get(key(rawRestaurant))||rawRestaurant,c=channel(row[ix.channel]),dt=date(row[ix.date],date1904),qty=number(row[ix.qty]),rawGroup=norm(row[ix.group]);
+        if(!r||!c||!dt||qty===null||!rawGroup||number(rawGroup)!==null)throw Error('Поток продаж_до, строка '+(n+1)+': проверьте ресторан, канал, дату, группу и количество.');
+        audit.rawSales++;salesDates.add(dt);
+        const matches=new Set([codeMap.get(norm(row[ix.code])),aliasMap.get(key(row[ix.name])),aliasMap.get(key(row[ix.corrected]))].filter(i=>i!==undefined));
+        if(matches.size>1)throw Error('Поток продаж_до, строка '+(n+1)+': неоднозначные код и название блюда.');
+        const di=[...matches][0],dish=di!==undefined?D.dishes[di]:null;
+        if(dish&&key(dish.group)!==key(rawGroup))throw Error('Поток продаж_до, строка '+(n+1)+': группа блюда не совпадает с СПР.');
+        if(dish&&dt<dish.start){audit.prematureSales++;continue;}
+        const group=groupNames.get(key(rawGroup))||rawGroup,name=dish?.name||norm(row[ix.name]),id=JSON.stringify([key(group),key(name)]);
+        if(!itemIds.has(id)){itemIds.set(id,items.length);items.push({name,group,newDish:di??null,start:dish?.start||null});}
+        const record=JSON.stringify([itemIds.get(id),r,c,dt]);sales.set(record,(sales.get(record)||0)+qty);
+      }
+    }
+    if(checks){
+      const hi=header(checks,[['ресторан'],['подразделение','кп'],['дата']]),h=checks[hi];
+      const ix={restaurant:column(h,['ресторан']),channel:column(h,['подразделение','кп']),date:column(h,['дата']),orders:orderColumn(checks,hi)};
+      for(let n=hi+1;n<checks.length;n++){
+        const row=checks[n],rawRestaurant=norm(row[ix.restaurant]);if(!rawRestaurant||/^(итог|общий итог)$/i.test(rawRestaurant))continue;
+        const r=restaurantNames.get(key(rawRestaurant))||rawRestaurant,c=channel(row[ix.channel]),dt=date(row[ix.date],date1904),count=number(row[ix.orders]);
+        if(!c||!dt||count===null||count<0)throw Error('Поток чеков_до, строка '+(n+1)+': проверьте дату, канал и количество заказов.');
+        const record=JSON.stringify([r,c,dt]);orders.set(record,(orders.get(record)||0)+count);audit.rawOrders++;
+      }
+    }
+    return {version:1,items,sales:[...sales].map(([record,qty])=>[...JSON.parse(record),qty]),orders:[...orders].map(([record,count])=>[...JSON.parse(record),count]),mainSalesDates,
+      sources:{sales:!!flow,orders:!!checks},salesDates:[...salesDates].sort(),audit};
   }
   async function parseXlsx(file){
     if(!/меню_продажи/i.test(file.name)||!/\.xlsx$/i.test(file.name))throw Error('Выберите файл .xlsx, в названии которого есть «Меню_Продажи».');
@@ -93,7 +157,8 @@ const MenuEngine = (() => {
     const pr=items(wb,'workbookPr')[0],date1904=pr&&['1','true'].includes(pr.getAttribute('date1904'));
     const sheets={};
     for(const s of items(wb,'sheet')){
-      const name=norm(s.getAttribute('name'));if(!['СПР','Поток продаж','Поток чеков','ПотокЧеков'].includes(name))continue;
+      const originalName=norm(s.getAttribute('name')),name=sheetRole(originalName);if(!name)continue;
+      if(sheets[name])throw Error('Неоднозначные источники листа «'+name+'».');
       const rid=s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id')||s.getAttribute('r:id');let target=targets.get(rid);if(!target)throw Error('Не найден лист '+name);
       target=target.startsWith('/')?target.slice(1):'xl/'+target;target=target.replace(/(^|\/)\.\//g,'$1');const parts=[];for(const p of target.split('/')){if(p==='..')parts.pop();else parts.push(p);}target=parts.join('/');
       const sf=zip.file(target);if(!sf)throw Error('Не найден лист '+name);
@@ -103,7 +168,7 @@ const MenuEngine = (() => {
       const withoutFormulas=s=>s.replace(/<f\b[^>]*\/>|<f\b[^>]*>[\s\S]*?<\/f>/g,'');
       const opening=xml.match(/<worksheet\b[^>]*>/)?.[0]||'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
       const headerDoc=parse(opening+'<sheetData>'+withoutFormulas(headerRows.join(''))+'</sheetData></worksheet>');
-      const aliases=new Set(name==='СПР'?['позиция','позиция с корректировкой','позиция с коррект','мозг','код','группа','новое','старт']:name==='Поток продаж'?['позиция меню (блюдо)','позиция','блюдо','позиция с коррект','позиция с корректировкой','код','код позиции','ресторан','подразделение','кп','дата_отчет','дата отчёт','дата','позиций','количество','группа','группа меню']:['ресторан','подразделение','кп','дата','заказы','кол-во','кол-во заказов','количество заказов']);
+      const aliases=new Set(name==='СПР'?['позиция','позиция с корректировкой','позиция с коррект','мозг','код','группа','новое','старт']:['Поток продаж','Поток продаж_до'].includes(name)?['позиция меню (блюдо)','позиция','блюдо','позиция с коррект','позиция с корректировкой','код','код позиции','ресторан','подразделение','кп','дата_отчет','дата отчёт','дата','позиций','количество','группа','группа меню']:['ресторан','подразделение','кп','дата','заказы','кол-во','кол-во заказов','количество заказов']);
       const keep=new Set();for(const cell of items(headerDoc,'c')){const type=cell.getAttribute('t'),v=items(cell,'v')[0]?.textContent,label=type==='s'?shared[Number(v)]:type==='inlineStr'?items(cell,'t').map(t=>t.textContent).join(''):v;if(aliases.has(key(label)))keep.add((cell.getAttribute('r')||'A1').match(/^[A-Z]+/)[0]);}
       if(!keep.size)throw Error('Не найдены исходные столбцы листа «'+name+'».');
       const compact=[];for(const match of xml.matchAll(rowPattern)){
@@ -338,7 +403,145 @@ const MenuEngine = (() => {
       return {...row,comparisonQty,comparisonOrders,comparisonRate,coverage,expectedQty,othersRate,deviation,diff:othersRate!==null&&comparisonRate!==null?comparisonRate-othersRate:null,details,missingPairs,model:'weights',modelVersion:2};
     });
   }
-  function benchmark(D,f,context=null){return f.rankingMethod==='weights'?benchmarkWeighted(D,f,context):benchmarkClassic(D,f,context);}
-  return {buildDataset,parseXlsx,defaults,calculate,benchmark,benchmarkClassic,benchmarkWeighted,dishDaily,weekly,addDays,diffDays,collator};
+  const beforeCache=new WeakMap(),beforeModelVersion=1;
+  function historyIndex(D){
+    if(beforeCache.has(D))return beforeCache.get(D);
+    const items=D.history?.items||D.menuItems||[],recordKey=parts=>JSON.stringify(parts);
+    const mainSales=new Map(),mainOrders=new Map(),extraSales=new Map(),extraOrders=new Map();
+    const add=(map,parts,q)=>{const k=recordKey(parts);map.set(k,(map.get(k)||0)+q);};
+    for(const [i,r,c,dt,q] of D.menuSales||[])add(mainSales,[i,key(D.restaurants[r]),key(D.channels[c]),dt],q);
+    for(const [r,c,dt,n] of D.orders)add(mainOrders,[key(D.restaurants[r]),key(D.channels[c]),dt],n);
+    for(const [i,r,c,dt,q] of D.history?.sales||[])add(extraSales,[i,key(r),key(c),dt],q);
+    for(const [r,c,dt,n] of D.history?.orders||[])add(extraOrders,[key(r),key(c),dt],n);
+    const merge=(primary,additional)=>{
+      const result=new Map(primary);
+      for(const [k,q] of additional){if(!result.has(k))result.set(k,q);else if(Math.abs(result.get(k)-q)>1e-9)result.set(k,null);}
+      return result;
+    };
+    const sales=merge(mainSales,extraSales),orders=merge(mainOrders,extraOrders);
+    function sourceIndex(salesRecords,orderRecords){
+      const result={pairs:new Map(),orders:new Map(),groupDates:new Map()};
+      for(const [k,q] of salesRecords){
+        const [i,r,c,dt]=JSON.parse(k),group=items[i].group,pk=recordKey([key(group),r,c]);
+        if(!result.pairs.has(pk))result.pairs.set(pk,new Map());
+        const days=result.pairs.get(pk);if(!days.has(dt))days.set(dt,{counts:new Map(),conflict:false});
+        const point=days.get(dt);point.counts.set(i,q);if(q===null)point.conflict=true;
+        if(!result.groupDates.has(key(group)))result.groupDates.set(key(group),new Set());result.groupDates.get(key(group)).add(dt);
+      }
+      for(const [k,n] of orderRecords){const [r,c,dt]=JSON.parse(k),pk=recordKey([r,c]);if(!result.orders.has(pk))result.orders.set(pk,new Map());result.orders.get(pk).set(dt,n);}
+      return result;
+    }
+    const combined=sourceIndex(sales,orders),current=sourceIndex(mainSales,mainOrders);
+    // Ambiguous overlaps affect only the new model. The two previous models keep their primary arrays.
+    for(const [pk,days] of current.pairs)for(const [dt,p] of days)if(combined.pairs.get(pk)?.get(dt)?.conflict)p.conflict=true;
+    for(const [pk,days] of current.orders)for(const dt of days.keys())if(combined.orders.get(pk)?.get(dt)===null)days.set(dt,null);
+    const index={items,combined,current,salesDates:new Set([...(D.history?.mainSalesDates||(D.menuSales||[]).map(s=>s[3])),...(D.history?.salesDates||[])]),orderDates:new Set([...orders.keys()].map(k=>JSON.parse(k)[2])),scenarios:new Map(),stats:new Map()};
+    beforeCache.set(D,index);return index;
+  }
+  function periodStats(H,source,group,r,c,start,end,comparable,cachePrefix){
+    const cacheKey=JSON.stringify([cachePrefix,key(group),key(r),key(c),start,end,[...comparable].sort((a,b)=>a-b)]);
+    if(H.stats.has(cacheKey))return H.stats.get(cacheKey);
+    const days=source.pairs.get(JSON.stringify([key(group),key(r),key(c)]))||new Map(),orderDays=source.orders.get(JSON.stringify([key(r),key(c)]))||new Map();
+    let qty=0,orders=0,positive=0,coveredPositive=0,reason=null;const excludedItems=new Set(),invalidDays=new Map();
+    for(const [dt,n] of orderDays)if(dt>=start&&dt<=end){if(n===null){reason='source_conflict';invalidDays.set(dt,reason);}else orders+=n;}
+    for(const [dt,p] of days){
+      if(dt<start||dt>end)continue;
+      if(p.conflict){reason='source_conflict';invalidDays.set(dt,'source_conflict');}
+      let nonzero=false,negative=false;
+      for(const [i,q] of p.counts){
+        if(q===null)continue;const item=H.items[i];if(item.start&&dt<item.start)continue;
+        nonzero=nonzero||q!==0;negative=negative||q<0;positive+=Math.max(0,q);
+        if(comparable.has(i)){qty+=q;coveredPositive+=Math.max(0,q);}else if(q!==0)excludedItems.add(item.name);
+      }
+      if(negative){invalidDays.set(dt,'negative_counts');reason=reason||'negative_counts';}
+      if(nonzero&&(!orderDays.has(dt)||orderDays.get(dt)===0)){invalidDays.set(dt,'incomplete_orders');reason=reason||'incomplete_orders';}
+    }
+    if(!reason&&orders<=0)reason='no_orders';
+    const stats={qty,orders,rate:orders>0&&!reason?100*qty/orders:null,positive,coveredPositive,coverage:positive>0?100*coveredPositive/positive:null,excludedItems:[...excludedItems].sort(collator.compare),invalidDays,days,orderDays,reason};
+    H.stats.set(cacheKey,stats);return stats;
+  }
+  function comparableBasket(D,W,fit,item,group,r,c,end){
+    const basket=[...(W.baskets.get(JSON.stringify([group,c,r]))||[])].filter(i=>!D.menuItems[i].start||D.menuItems[i].start<=end);
+    const component=fit.components.get(item),positive=(fit.weights.get(item)||0)>0;
+    const comparable=new Set(basket.filter(i=>fit.weights.has(i)&&(!positive||!(fit.weights.get(i)>0)||fit.components.get(i)===component)));
+    const reason=!comparable.size||![...comparable].some(i=>D.menuItems[i].newDish===null&&fit.weights.get(i)>0)?'no_comparable_group':null;
+    return {comparable,reason,excluded:basket.filter(i=>!comparable.has(i)).map(i=>D.menuItems[i].name)};
+  }
+  function beforeScenario(D,H,W,d,r,c,range){
+    const launch=D.dishes[d].start,beforeStart=addDays(launch,-14),beforeEnd=addDays(launch,-1),group=D.dishes[d].group;
+    const cacheKey=JSON.stringify([beforeModelVersion,d,r,c,launch,beforeStart,beforeEnd,range.start,range.end]);
+    if(H.scenarios.has(cacheKey))return H.scenarios.get(cacheKey);
+    const result={beforeStart,beforeEnd,afterStart:range.start,afterEnd:range.end,beforeRate:null,beforeCoverage:null,networkBefore:null,networkAfter:null,networkFactor:null,networkRestaurants:0,peerRestaurants:0,reason:null,localItems:[],beforeExcludedItems:[],peerExclusions:[],comparable:new Set()};
+    const finish=()=>{if(H.scenarios.size>=4096)H.scenarios.clear();H.scenarios.set(cacheKey,result);return result;};
+    if(!W){result.reason='missing_groups';return finish();}
+    const groupDates=H.combined.groupDates.get(key(group))||new Set();
+    if(![...groupDates].some(dt=>dt>=beforeStart&&dt<=beforeEnd)){result.reason='no_before_group';return finish();}
+    for(let day=0;day<14;day++){const dt=addDays(beforeStart,day);if(!H.salesDates.has(dt)||!H.orderDates.has(dt)){result.reason='incomplete_history';return finish();}}
+    const base=weightedBase(D,W,group,c,range.start,range.end),fit=weightedFit(W,base,r),item=W.itemByDish.get(d);
+    result.peerRestaurants=fit.peerRestaurants;result.fitIterations=fit.iterations;result.fitResidual=fit.residual;result.weights=fit.weights;result.item=item;
+    if(!fit.peerRestaurants||!fit.weights.has(item)){result.reason='no_peer_dish';return finish();}
+    if(!fit.converged){result.reason='not_converged';return finish();}
+    const basket=comparableBasket(D,W,fit,item,group,r,c,range.end);result.comparable=basket.comparable;result.localItems=basket.excluded;
+    if(basket.reason){result.reason=basket.reason;return finish();}
+    const before=periodStats(H,H.combined,group,D.restaurants[r],D.channels[c],beforeStart,beforeEnd,basket.comparable,'before');
+    result.beforeRate=before.rate;result.beforeCoverage=before.coverage;result.beforeExcludedItems=before.excludedItems;
+    if(before.reason){result.reason=before.reason;return finish();}
+    if(before.qty<=0){result.reason=before.qty<0?'negative_counts':'zero_before';return finish();}
+    const peers=[];
+    for(let u=0;u<D.restaurants.length;u++){
+      if(u===r)continue;
+      const candidate=comparableBasket(D,W,fit,item,group,u,c,range.end);if(candidate.reason){result.peerExclusions.push({restaurant:u,reason:candidate.reason});continue;}
+      const b=periodStats(H,H.combined,group,D.restaurants[u],D.channels[c],beforeStart,beforeEnd,candidate.comparable,'before');
+      const a=periodStats(H,H.current,group,D.restaurants[u],D.channels[c],range.start,range.end,candidate.comparable,'after');
+      const reason=b.reason||a.reason||(b.qty<=0?(b.qty<0?'negative_counts':'zero_before'):null);
+      if(reason){result.peerExclusions.push({restaurant:u,reason});continue;}
+      peers.push({restaurant:u,beforeRate:b.rate,afterRate:a.rate});
+    }
+    result.networkRestaurants=peers.length;result.peers=peers;
+    if(!peers.length){result.reason='no_network_base';return finish();}
+    result.networkBefore=peers.reduce((s,p)=>s+p.beforeRate,0)/peers.length;
+    result.networkAfter=peers.reduce((s,p)=>s+p.afterRate,0)/peers.length;
+    result.networkFactor=result.networkAfter/result.networkBefore;
+    result.after=periodStats(H,H.current,group,D.restaurants[r],D.channels[c],range.start,range.end,basket.comparable,'after');
+    return finish();
+  }
+  function benchmarkBefore(D,f,context=null){
+    const own=context||calculate(D,f),H=historyIndex(D),W=weightedIndex(D),availability=availabilityFor(D),pairSales=new Map();
+    for(const [d,r,c,dt,q] of own.sales){const k=d+'|'+r+'|'+c;if(!pairSales.has(k))pairSales.set(k,new Map());pairSales.get(k).set(dt,q);}
+    return own.restaurantRows.map(row=>{
+      const details=[],missingPairs=[],comparisonKeys=new Set();let expectation=0,comparisonQty=0,coveredPositive=0,totalPositive=0;
+      for(const d of own.ids)for(const c of f.channels){
+        if(!availability.get(d).has(row.id+'|'+c))continue;
+        const range=own.ranges.get(d);if(range.start>range.end)continue;
+        const sales=pairSales.get(d+'|'+row.id+'|'+c)||new Map(),positive=[...sales.values()].reduce((s,q)=>s+Math.max(0,q),0),qty=[...sales.values()].reduce((s,q)=>s+q,0);
+        totalPositive+=positive;
+        const scenario=beforeScenario(D,H,W,d,row.id,c,range),detail={...scenario,dish:d,channel:c,group:D.dishes[d].group,qty,comparisonQty:0,expectedQty:null,expectedShare:null,excludedDays:[],model:'before'};
+        // Internal maps and order counts are deliberately absent from serialized UI details.
+        delete detail.weights;delete detail.comparable;delete detail.after;delete detail.item;
+        let usedOrders=0,shareOrders=0,score=0,includedDays=0;
+        if(!scenario.reason){
+          const after=scenario.after;
+          for(const [dt,reason] of after.invalidDays)detail.excludedDays.push({date:dt,reason});
+          for(const [dt,n] of after.orderDays){
+            if(dt<range.start||dt>range.end||after.invalidDays.has(dt)||n===null)continue;
+            const basket=[...scenario.comparable].filter(i=>!D.menuItems[i].start||D.menuItems[i].start<=dt),sum=basket.reduce((s,i)=>s+(scenario.weights.get(i)||0),0);
+            if(sum<=0||!basket.some(i=>D.menuItems[i].newDish===null&&scenario.weights.get(i)>0)){detail.excludedDays.push({date:dt,reason:'no_comparable_group'});continue;}
+            const share=(scenario.weights.get(scenario.item)||0)/sum,fact=sales.get(dt)||0;
+            score+=n/100*scenario.beforeRate*scenario.networkFactor*share;shareOrders+=n*share;usedOrders+=n;includedDays++;
+            detail.comparisonQty+=fact;coveredPositive+=Math.max(0,fact);comparisonKeys.add(row.id+'|'+c+'|'+dt);
+          }
+          if(includedDays&&usedOrders>0){detail.expectedQty=score;detail.expectedShare=shareOrders/usedOrders;expectation+=score;comparisonQty+=detail.comparisonQty;}
+          else detail.reason=after.reason||'no_orders';
+          if(detail.excludedDays.length&&!detail.reason)detail.reason=detail.excludedDays[0].reason;
+        }
+        details.push(detail);if(detail.expectedQty===null)missingPairs.push(detail);
+      }
+      const expectedQty=details.some(p=>p.expectedQty!==null)?expectation:null,comparisonOrders=own.orderRecords.filter(([r,c,dt])=>comparisonKeys.has(r+'|'+c+'|'+dt)).reduce((s,o)=>s+o[3],0);
+      const comparisonRate=comparisonOrders>0?100*comparisonQty/comparisonOrders:null,othersRate=expectedQty!==null&&comparisonOrders>0?100*expectedQty/comparisonOrders:null;
+      return {...row,comparisonQty,comparisonOrders,comparisonRate,coverage:totalPositive>0?100*coveredPositive/totalPositive:null,expectedQty,othersRate,deviation:expectedQty>0?100*(comparisonQty/expectedQty-1):null,diff:othersRate!==null&&comparisonRate!==null?comparisonRate-othersRate:null,details,missingPairs,model:'before',modelVersion:beforeModelVersion};
+    });
+  }
+  function benchmark(D,f,context=null){return f.rankingMethod==='before'?benchmarkBefore(D,f,context):f.rankingMethod==='weights'?benchmarkWeighted(D,f,context):benchmarkClassic(D,f,context);}
+  return {buildDataset,parseXlsx,defaults,calculate,benchmark,benchmarkClassic,benchmarkWeighted,benchmarkBefore,dishDaily,weekly,addDays,diffDays,collator};
 })();
 if(typeof module!=='undefined')module.exports=MenuEngine;

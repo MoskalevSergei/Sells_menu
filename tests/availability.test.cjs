@@ -14,3 +14,12 @@ test('Orders from launch count before the first sale, availability uses all hist
 test('Hall incorporates terrace and no-plates sales and orders',()=>{
   const raw=structuredClone(sheets);raw['Поток продаж'].push(['Раннее','А','Летняя терраса','2026-01-07',1]);raw['Поток чеков'].push(['А','Без Тарелок','2026-01-05',50],['А','Летняя терраса','2026-01-05',20]);const D=E.buildDataset(raw);assert.equal(E.calculate(D,E.defaults(D)).dishRows[0].orders,3700);assert.equal(D.channels.filter(c=>c==='Зал').length,1);
 });
+test('Launch windows apply separately to each dish and aggregate a union of order records',()=>{
+  const D=E.buildDataset(sheets),f=E.defaults(D);f.window=1;
+  const c=E.calculate(D,f);
+  assert.equal(c.dishRows[0].orders,110);
+  assert.equal(c.dishRows[1].orders,200);
+  assert.equal(c.orders,310);
+  assert.equal(c.qty,2);
+  assert.equal(c.rate,100*2/310);
+});
