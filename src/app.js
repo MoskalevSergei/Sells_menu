@@ -6,6 +6,18 @@
   const shortName=s=>s.length>48?s.slice(0,45)+'…':s,colors=['#067b8a','#235dc1','#bd6c17','#7c5ac4','#ad4464','#4a6e92'];
   let D=JSON.parse($('dataset').textContent),F=E.defaults(D),ctx=null,tab='overview',metric='qty',sort={key:'rate',dir:-1},search='',page=1,restView='table',heatMetric='rate',channelMetric='rate',toastTimer=null,currentExport=[],activeDish=null,activeExpectation=null,expectationDish=null,benchmarkCache=null,knownDishDataset=null,knownDishIds=null;
   const savedView=JSON.parse($('dashboardState')?.textContent||'{}');
+  let filtersOpen=false,filterOpener=null;
+  function setFiltersOpen(open,restoreFocus=true){
+    if(open&&!filtersOpen)filterOpener=document.activeElement;
+    filtersOpen=open;$('filterDrawer').hidden=!open;$('filterBackdrop').hidden=!open;
+    $('workspace').inert=open;document.body.classList.toggle('drawer-open',open);
+    for(const id of ['filtersBtn','reportFiltersBtn'])$(id).setAttribute('aria-expanded',String(open));
+    if(open)$('closeFiltersBtn').focus();
+    else{
+      document.querySelectorAll('#filterDrawer details[open]').forEach(p=>p.open=false);
+      if(restoreFocus)(filterOpener||$('filtersBtn')).focus();
+    }
+  }
   if(savedView.filters){
     for(const field of ['start','end','type','window'])if(savedView.filters[field]!==undefined)F[field]=savedView.filters[field];
     if(['weights','classic','before'].includes(savedView.filters.rankingMethod))F.rankingMethod=savedView.filters.rankingMethod;
@@ -51,6 +63,22 @@
       const dialogSummary=field==='restaurants'&&$('dishDialog').open?$('summary-restaurants-dialog'):null;
       if(dialogSummary){dialogSummary.textContent=label;dialogSummary.title=label;}
     }
+  }
+  function updateFilterBar(){
+    const chips=[`Период: ${fmtDate(F.start,true)} — ${fmtDate(F.end,true)}`];
+    let count=Number(F.start!==D.minDate||F.end!==D.maxDate);
+    if(F.type!=='all'){chips.push(`Меню: ${F.type==='1'?'Новое':'Сезонное'}`);count++;}
+    if(F.window){chips.push(`После запуска: первые ${F.window} дней`);count++;}
+    for(const [field,label] of [['launches','Запуск'],['restaurants','Ресторан'],['channels','Канал'],['groups','Группа'],['dishes','Блюдо']]){
+      const value=$('summary-'+field).textContent;
+      if(value!=='Все'){chips.push(`${label}: ${value}`);count++;}
+    }
+    if(F.rankingMethod!==(D.menuItems?'weights':'classic')){chips.push(`Рейтинг: ${rankingName()}`);count++;}
+    $('activeFilters').innerHTML=chips.map(s=>`<span class="filter-chip">${esc(s)}</span>`).join('')+(count?'':'<span class="muted">Все рестораны и каналы · весь ассортимент</span>');
+    $('filterCount').textContent=count;$('filterCount').hidden=!count;
+    $('resetBtn').disabled=!count;
+    $('tabTitle').textContent={overview:'Обзор',dishes:'Блюда',restaurants:'Рестораны',channels:'Каналы'}[tab];
+    $('content').setAttribute('aria-labelledby','tab-'+tab);
   }
   function panel(title,body,sub='',controls=''){return`<section class="panel"><div class="panel-head"><div><h2>${esc(title)}</h2>${sub?`<p class="sub">${esc(sub)}</p>`:''}</div>${controls}</div>${body}</section>`;}
   const empty=message=>`<div class="empty">${esc(message||'Нет данных для выбранных фильтров.')}</div>`;
@@ -212,19 +240,30 @@
     return cards+panel('Распределение продаж по каналам',dist+table,'Доля в штуках показывает структуру продаж.')+panel('Блюда по каналам',tableToolbar(controls)+detail,'Выбранный показатель используется в каналах и в итоге. Итоговый СКП рассчитан по общей подходящей базе.');
   }
   function render(){
-    updateSummaries();currentExport={headers:[],rows:[]};ctx=E.calculate(D,F);const bounds=ctx.dates.length?`${fmtDate(ctx.dates[0])} — ${fmtDate(ctx.dates.at(-1),true)}`:'нет заказов';
+    updateSummaries();updateFilterBar();currentExport={headers:[],rows:[]};ctx=E.calculate(D,F);const bounds=ctx.dates.length?`${fmtDate(ctx.dates[0])} — ${fmtDate(ctx.dates.at(-1),true)}`:'нет заказов';
     $('filterMeta').textContent=`Выбрано ${visibleDishRows().length} блюд · период данных: ${bounds}`;
     $('kpis').innerHTML=[['СКП на 100 заказов',n(ctx.rate,2),'Шт. в выбранном меню'],['Продано, шт.',n(ctx.qty),'Новое и сезонное по фильтрам'],['Блюд с продажами',`${ctx.activeDishes} / ${visibleDishRows().length}`,'Из выбранного справочника']].map(([label,value,foot])=>`<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="kpi-foot">${foot}</div></div>`).join('');
     const selected=F.start<=F.end&&F.start&&F.end;
     $('content').innerHTML=!selected?empty('Начало периода должно быть не позже его окончания.'):!visibleDishRows().length?empty(F.dishes.size&&F.groups.size&&F.launches.size?'В выбранном периоде нет запущенных блюд с продажами в загруженном файле.':'Выберите хотя бы одно блюдо, группу, тип меню и запуск.'):(tab==='overview'?renderOverview():tab==='dishes'?renderDishes():tab==='restaurants'?renderRestaurants():renderChannels());
     if(ctx.missingOrderSales.length){const labels=[...new Set(ctx.missingOrderSales.map(([d,r,c,dt])=>D.restaurants[r]+' / '+D.channels[c]+' / '+fmtDate(dt,true)))];$('content').innerHTML=`<div class="status-note">В «Потоке чеков» отсутствуют данные: ${esc(labels.join('; '))}. Затронутые СКП показаны как «—». Продажи в штуках и рейтинг с весами рассчитываются по продажам блюд и групп.</div>`+$('content').innerHTML;}
-    document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
+    document.querySelectorAll('[data-tab]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.tab===tab));b.setAttribute('tabindex',b.dataset.tab===tab?'0':'-1');});
     if($('dishDialog').open&&activeExpectation!==null)openExpectation(activeExpectation);
     if($('dishDialog').open&&activeDish!==null){if(dishesWithSales().has(activeDish)&&D.dishes[activeDish]?.start<=F.end)openDish(activeDish);else $('dishDialog').close();}
   }
   function reset(){F=E.defaults(D);search='';page=1;sort={key:tab==='restaurants'?'deviation':'rate',dir:-1};setupFilters();render();}
   function download(blob,name){const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);}
-  function save(){const clone=document.documentElement.cloneNode(true);clone.querySelector('#dataset').textContent=JSON.stringify(D).replace(/</g,'\\u003c');clone.querySelector('#dashboardState').textContent=JSON.stringify({tab,filters:Object.fromEntries(Object.entries(F).map(([k,v])=>[k,v instanceof Set?[...v]:v]))}).replace(/</g,'\\u003c');clone.querySelector('#dishDialog').innerHTML='';clone.querySelector('#dishDialog').removeAttribute('open');clone.querySelector('#toast').style.display='none';clone.querySelector('#loading').style.display='none';for(const p of clone.querySelectorAll('details'))p.removeAttribute('open');download(new Blob(['<!doctype html>\n'+clone.outerHTML],{type:'text/html;charset=utf-8'}),'Меню_Продажи_дашборд.html');toast('HTML сохранён с текущими данными.');}
+  function save(){
+    const clone=document.documentElement.cloneNode(true);
+    clone.querySelector('#dataset').textContent=JSON.stringify(D).replace(/</g,'\\u003c');
+    clone.querySelector('#dashboardState').textContent=JSON.stringify({tab,filters:Object.fromEntries(Object.entries(F).map(([k,v])=>[k,v instanceof Set?[...v]:v]))}).replace(/</g,'\\u003c');
+    clone.querySelector('#dishDialog').innerHTML='';clone.querySelector('#dishDialog').removeAttribute('open');
+    clone.querySelector('#toast').style.display='none';clone.querySelector('#loading').style.display='none';
+    clone.querySelector('body').classList.remove('drawer-open');clone.querySelector('#workspace').removeAttribute('inert');
+    for(const id of ['filterDrawer','filterBackdrop'])clone.querySelector('#'+id).hidden=true;
+    for(const id of ['filtersBtn','reportFiltersBtn'])clone.querySelector('#'+id).setAttribute('aria-expanded','false');
+    for(const p of clone.querySelectorAll('details'))p.removeAttribute('open');
+    download(new Blob(['<!doctype html>\n'+clone.outerHTML],{type:'text/html;charset=utf-8'}),'Меню_Продажи_дашборд.html');toast('HTML сохранён с текущими данными.');
+  }
   function exportCsv(){if(!currentExport.rows?.length){toast('Нет строк для выгрузки.');return;}const cell=x=>{const s=typeof x==='number'?String(Math.round(x*1000000)/1000000).replace('.',','):String(x??'');const safe=/^[=+@-]/.test(s)&&typeof x!=='number'?"'"+s:s;return '"'+safe.replace(/"/g,'""')+'"';};const text=[currentExport.headers,...currentExport.rows].map(row=>row.map(cell).join(';')).join('\r\n');download(new Blob(['\ufeff'+text],{type:'text/csv;charset=utf-8'}),'Меню_'+currentExport.kind+'_'+F.end+'.csv');toast('Таблица выгружена в CSV для Excel.');}
   function openExpectation(id){
     if(activeDish!==null)expectationDish=activeDish;
@@ -261,7 +300,7 @@
     if(!$('dishDialog').open)$('dishDialog').showModal();updateSummaries();if(fresh)$('dishDialog').scrollTop=0;
   }
   document.addEventListener('click',e=>{
-    const b=e.target.closest('button');if(b?.dataset.tab){tab=b.dataset.tab;search='';page=1;sort={key:tab==='restaurants'?'deviation':'rate',dir:-1};render();}
+    const b=e.target.closest('button');if(b?.dataset.tab){if(filtersOpen)setFiltersOpen(false,false);tab=b.dataset.tab;search='';page=1;sort={key:tab==='restaurants'?'deviation':'rate',dir:-1};render();}
     if(b?.dataset.dish!==undefined)openDish(Number(b.dataset.dish));
     if(b?.dataset.expectation!==undefined)openExpectation(Number(b.dataset.expectation));
     if(b?.hasAttribute('data-close'))$('dishDialog').close();
@@ -278,12 +317,15 @@
   });
   let searchTimer;document.addEventListener('input',e=>{const el=e.target;if(el.type==='search'&&el.closest('.picker-pop')){const v=keySearch(el.value);for(const l of el.closest('.picker-pop').querySelectorAll('.picker-option'))l.style.display=l.dataset.label.includes(v)?'flex':'none';}if(el.id==='tableSearch'){search=el.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{const pos=el.selectionStart;page=1;render();const t=$('tableSearch');if(t){t.focus();if(t.type!=='search')t.setSelectionRange(pos,pos);}},160);}});
   for(const [id,field] of [['startDate','start'],['endDate','end'],['typeFilter','type'],['windowFilter','window']])$(id).addEventListener('change',()=>{F[field]=field==='window'?Number($(id).value):$(id).value;page=1;render();});
-  $('resetBtn').onclick=reset;$('allPeriod').onclick=()=>{F.start=D.minDate;F.end=D.maxDate;$('startDate').value=F.start;$('endDate').value=F.end;page=1;render();};$('last7').onclick=()=>{F.end=D.maxDate;F.start=[D.minDate,E.addDays(D.maxDate,-6)].sort().at(-1);$('startDate').value=F.start;$('endDate').value=F.end;page=1;render();};
+  for(const id of ['filtersBtn','reportFiltersBtn'])$(id).onclick=()=>setFiltersOpen(!filtersOpen);
+  for(const id of ['closeFiltersBtn','applyFiltersBtn','filterBackdrop'])$(id).onclick=()=>setFiltersOpen(false);
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&filtersOpen){setFiltersOpen(false);e.preventDefault();}});
+  $('resetBtn').onclick=reset;$('resetDrawerBtn').onclick=reset;$('allPeriod').onclick=()=>{F.start=D.minDate;F.end=D.maxDate;$('startDate').value=F.start;$('endDate').value=F.end;page=1;render();};$('last7').onclick=()=>{F.end=D.maxDate;F.start=[D.minDate,E.addDays(D.maxDate,-6)].sort().at(-1);$('startDate').value=F.start;$('endDate').value=F.end;page=1;render();};
   $('loadBtn').onclick=()=>$('fileInput').click();$('saveBtn').onclick=save;$('exportBtn').onclick=exportCsv;
   $('fileInput').addEventListener('change',async()=>{const file=$('fileInput').files[0];if(!file)return;$('loading').style.display='flex';$('loadBtn').disabled=true;try{const next=await E.parseXlsx(file);D=next;reset();$('dataset').textContent=JSON.stringify(D).replace(/</g,'\\u003c');toast(`Данные обновлены: ${D.dishes.length} блюд, ${D.restaurants.length} ресторанов. Сохраните HTML с данными.`);}catch(err){toast('Не удалось обновить данные. '+err.message,true);}finally{$('loading').style.display='none';$('loadBtn').disabled=false;$('fileInput').value='';}});
   $('dishDialog').addEventListener('close',()=>{activeDish=null;activeExpectation=null;expectationDish=null;$('dishDialog').innerHTML='';updateSummaries();});
   $('dishDialog').addEventListener('click',e=>{if(e.target===$('dishDialog')){const r=$('dishDialog').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('dishDialog').close();}});
-  document.querySelector('.tabs').addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)||!e.target.matches('[data-tab]'))return;const btns=[...document.querySelectorAll('[data-tab]')],i=btns.indexOf(e.target),idx=e.key==='Home'?0:e.key==='End'?btns.length-1:(i+(e.key==='ArrowRight'?1:-1)+btns.length)%btns.length;btns[idx].click();btns[idx].focus();e.preventDefault();});
+  document.querySelector('.tabs').addEventListener('keydown',e=>{if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(e.key)||!e.target.matches('[data-tab]'))return;const btns=[...document.querySelectorAll('[data-tab]')],i=btns.indexOf(e.target),idx=e.key==='Home'?0:e.key==='End'?btns.length-1:(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:-1)+btns.length)%btns.length;btns[idx].click();btns[idx].focus();e.preventDefault();});
   let resizeTimer;window.addEventListener?.('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(render,160);});
-  setupFilters();render();window.MenuDashboard={getData:()=>D,getFilters:()=>F,getContext:()=>ctx,calculate:E.calculate,benchmark:E.benchmark,getBenchmark:()=>benchmarkRows(),getExport:()=>currentExport,reset};
+  setFiltersOpen(false,false);setupFilters();render();window.MenuDashboard={getData:()=>D,getFilters:()=>F,getContext:()=>ctx,calculate:E.calculate,benchmark:E.benchmark,getBenchmark:()=>benchmarkRows(),getExport:()=>currentExport,reset};
 })();
