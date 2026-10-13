@@ -4,7 +4,7 @@ const box={DOMParser,JSZip,Intl,Date,Set,Map,JSON,Number,String,Math,console,mod
 const file=(bytes,name='Меню_Продажи_пример.xlsx')=>({name,arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)});
 test('Real XLSX ZIP/XML reader matches the synthetic source tables',async()=>{
   const sheets=demoSheets(),expected=E.buildDataset(sheets),actual=await E.parseXlsx(file(await workbookBytes(sheets),'Отчет_МЕНЮ_ПРОДАЖИ_пример.XLSX'));
-  for(const k of ['dishes','restaurants','channels','sales','orders','menuItems','menuSales','availability','menuAvailability'])assert.equal(JSON.stringify(actual[k]),JSON.stringify(expected[k]),k);
+  for(const k of ['dishes','restaurants','channels','sales','orders','menuItems','menuSales','availability','menuAvailability','launchPairs'])assert.equal(JSON.stringify(actual[k]),JSON.stringify(expected[k]),k);
   assert.equal(actual.missingOrderSales.length,0);const a=E.calculate(actual,E.defaults(actual)),b=E.calculate(expected,E.defaults(expected));assert.equal(a.qty,b.qty);assert.equal(a.rate,b.rate);
   const changed=demoSheets(),sale=changed['Поток продаж'].find(r=>r[0]==='Новое блюдо 1');sale[5]+=10;
   const next=await E.parseXlsx(file(await workbookBytes(changed))),result=E.calculate(next,E.defaults(next));assert.equal(result.qty,a.qty+10);assert.equal(result.orders,a.orders);
@@ -51,12 +51,35 @@ test('Mismatched before sales/order periods cannot create an early-launch baseli
   f.dishes=new Set([3]);assert.ok(E.benchmark(D,f).some(r=>r.expectedQty!==null));
 });
 test('Before history shares canonical identities and SPR aliases; premature novelty sales are diagnosed',()=>{
-  const sheets=demoSheets();sheets['СПР'][0].push('Код','Мозг');sheets['СПР'][1].push('TEST-CODE','Псевдоним новинки');
+  const sheets=demoSheets();sheets['СПР'][0].push('Мозг');sheets['СПР'][1].push('Псевдоним новинки');
   const h=sheets['Поток продаж_до'];h[0].push('Код');
   h[1][0]=' обычный   суп 1 ';h[1][1]=' ресторан 1 ';h[1][2]='Летняя терраса';h[1][4]=' супы ';
-  h.push(['Псевдоним новинки','Ресторан 1','Без Тарелок','2026-01-04','Супы',100,'TEST-CODE']);
+  h.push(['Псевдоним новинки','Ресторан 1','Без Тарелок','2026-01-04','Супы',100,sheets['СПР'][1][4]]);
   const D=E.buildDataset(sheets);assert.equal(D.history.audit.prematureSales,1);
   assert.ok(!D.history.sales.some(r=>D.history.items[r[0]].newDish===0&&r[3]<'2026-01-05'));
   assert.ok(D.history.sales.some(r=>D.history.items[r[0]].name==='Обычный суп 1'&&r[1]==='Ресторан 1'&&r[2]==='Зал'));
   h.at(-1)[4]='Завтрак';assert.throws(()=>E.buildDataset(sheets),/группа блюда не совпадает/);
+});
+test('XLSX imports the launch list by code, keeping disallowed sales only in the group data',async()=>{
+  const sheets=demoSheets();sheets['Рестораны_Блюдо']=sheets['Рестораны_Блюдо'].filter((r,i)=>i===0||!(r[0]==='DEMO-001'&&r[2]==='Ресторан 1'));
+  for(const row of sheets['Рестораны_Блюдо'].slice(1))row[1]='Название не используется для сопоставления';
+  sheets['Рестораны_Блюдо'].push(['UNKNOWN','Новое блюдо 1','Ресторан 1']);
+  sheets[' РЕСТОРАНЫ_БЛЮДО ']=sheets['Рестораны_Блюдо'];delete sheets['Рестораны_Блюдо'];
+  const D=await E.parseXlsx(file(await workbookBytes(sheets))),r=D.restaurants.indexOf('Ресторан 1');
+  assert.equal(D.launchPairs.length,14);assert.equal(D.audit.launches.unknownCodes.length,1);
+  assert.ok(!D.sales.some(s=>s[0]===0&&s[1]===r));assert.ok(!D.availability.some(s=>s[0]===0&&s[1]===r));
+  const item=D.menuItems.findIndex(i=>i.newDish===0);assert.ok(D.menuSales.some(s=>s[0]===item&&s[1]===r));
+  assert.equal(JSON.stringify(D.launchPairs),JSON.stringify(E.buildDataset(sheets).launchPairs));
+});
+test('New XLSX loads require the launch sheet and every SPR code, including dishes without sales',async()=>{
+  const sheets=demoSheets();delete sheets['Рестораны_Блюдо'];
+  await assert.rejects(E.parseXlsx(file(await workbookBytes(sheets))),/Нужен лист «Рестораны_Блюдо»/);
+  const missing=demoSheets();missing['Рестораны_Блюдо']=missing['Рестораны_Блюдо'].filter((r,i)=>i===0||r[0]!=='DEMO-005');
+  await assert.rejects(E.parseXlsx(file(await workbookBytes(missing))),/DEMO-005 — Блюдо без продаж/);
+  const codes=demoSheets();for(const row of codes['СПР'])row.pop();
+  await assert.rejects(E.parseXlsx(file(await workbookBytes(codes))),/Не найден столбец «код»/);
+});
+test('Two launch sheets cannot silently override one another',async()=>{
+  const sheets=demoSheets();sheets['Рестораны Блюдо']=sheets['Рестораны_Блюдо'];
+  await assert.rejects(E.parseXlsx(file(await workbookBytes(sheets))),/Неоднозначные источники листа «Рестораны_Блюдо»/);
 });
