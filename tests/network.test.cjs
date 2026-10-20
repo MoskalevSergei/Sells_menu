@@ -70,10 +70,35 @@ test('Zero full-group baseline has an absolute change and no percentage; a fully
 });
 test('Temporal growth uses two fully loaded equal post-launch windows and never compares novelties to zero before launch',()=>{
   let {S}=summary(networkSheets({days:14,dishes:[{name:'Новинка',group:'Группа',type:1,start:'2026-05-05',share:day=>day<7?.2:.3}]}));
-  near(S.launches[0].change,0);near(S.noveltyTrend.percent,50);assert.equal(S.noveltyTrend.completeSelection,true);assert.equal(S.possibleSubstitution,true);
-  ({S}=summary(networkSheets({days:7})));assert.equal(S.noveltyTrend.status,'unavailable');assert.equal(S.noveltyTrend.percent,null);assert.equal(S.possibleSubstitution,false);
+  near(S.launches[0].change,0);near(S.noveltyTrend.percent,50);near(S.noveltyTrend.ratePrevious,2.2);near(S.noveltyTrend.rateRecent,3.3);near(S.noveltyTrend.ratePercent,50);assert.equal(S.noveltyTrend.completeSelection,true);assert.equal(S.possibleSubstitution,true);
+  ({S}=summary(networkSheets({days:7})));assert.equal(S.noveltyTrend.status,'unavailable');assert.equal(S.noveltyTrend.percent,null);assert.equal(S.noveltyTrend.ratePrevious,null);assert.equal(S.noveltyTrend.rateRecent,null);assert.equal(S.noveltyTrend.ratePercent,null);assert.equal(S.possibleSubstitution,false);
   const s=networkSheets({days:14});s['Поток продаж']=s['Поток продаж'].filter((r,i)=>i===0||r[3]!=='2026-05-10');
-  ({S}=summary(s));assert.equal(S.noveltyTrend.status,'unavailable');
+  ({S}=summary(s));assert.equal(S.noveltyTrend.status,'unavailable');assert.equal(S.noveltyTrend.ratePercent,null);
+});
+test('Weekly SKP uses one union base across dishes and groups; each menu type keeps its own suitable base',()=>{
+  const {S}=summary(networkSheets({days:14,dishes:[{name:'Новая',group:'Группа',type:1,start:'2026-05-05',share:.2},{name:'Сезонная',group:'Группа',type:0,start:'2026-05-05',share:.3}]}));
+  near(S.noveltyTrend.qtyPrevious,385);near(S.noveltyTrend.ratePrevious,5.5);near(S.noveltyTrend.rateRecent,5.5);near(S.noveltyTrend.ratePercent,0);
+  near(S.types[0].trend.ratePrevious,2.2);near(S.types[1].trend.ratePrevious,3.3);
+  const grouped=summary(networkSheets({days:14,dishes:[{name:'А',group:'А',type:1,start:'2026-05-05',share:.2},{name:'Б',group:'Б',type:1,start:'2026-05-05',share:.3}]}));
+  near(grouped.S.types[0].trend.ratePrevious,5.5);near(grouped.S.types[0].trend.rateRecent,5.5);
+});
+test('Lower weekly units at unchanged SKP are not a drop in purchase frequency; zero weekly base has no relative percent',()=>{
+  const s=networkSheets({days:14});
+  for(const row of s['Поток продаж'].slice(1))if(row[3]>='2026-05-12')row[5]/=2;
+  for(const row of s['Поток чеков'].slice(1))if(row[2]>='2026-05-12')row[3]/=2;
+  const {S}=summary(s);near(S.noveltyTrend.percent,-50);near(S.noveltyTrend.ratePrevious,2.2);near(S.noveltyTrend.rateRecent,2.2);near(S.noveltyTrend.rateChange,0);near(S.noveltyTrend.ratePercent,0);assert.equal(S.possibleSubstitution,false);
+  for(const row of s['Поток продаж'].slice(1))if(row[3]>='2026-05-12')row[5]*=4;
+  for(const row of s['Поток чеков'].slice(1))if(row[2]>='2026-05-12')row[3]*=4;
+  const busier=summary(s);near(busier.S.noveltyTrend.percent,100);near(busier.S.noveltyTrend.rateChange,0);assert.equal(busier.S.possibleSubstitution,false);
+  const zero=summary(networkSheets({days:14,dishes:[{name:'Новинка',group:'Группа',type:1,start:'2026-05-05',share:day=>day<7?0:.2}]}));
+  near(zero.S.noveltyTrend.ratePrevious,0);near(zero.S.noveltyTrend.rateRecent,2.2);near(zero.S.noveltyTrend.rateChange,2.2);assert.equal(zero.S.noveltyTrend.ratePercent,null);
+});
+test('Weekly SKP excludes invalid pairs from both weeks and applies restaurant/channel/date filters to the union',()=>{
+  const s=networkSheets({days:14});
+  s['Поток чеков']=s['Поток чеков'].filter((r,i)=>i===0||r[0]!=='Ресторан 1'||r[2]<'2026-05-12');
+  const {D,f,S}=summary(s);near(S.noveltyTrend.qtyPrevious,126);near(S.noveltyTrend.qtyRecent,126);near(S.noveltyTrend.ratePrevious,2);near(S.noveltyTrend.rateRecent,2);assert.equal(S.noveltyTrend.completeSelection,false);
+  const selected=E.networkSummary(D,{...f,restaurants:new Set([0])});near(selected.noveltyTrend.ratePrevious,2);assert.equal(selected.noveltyTrend.completeSelection,true);
+  const short=E.networkSummary(D,{...f,start:'2026-05-06'});assert.equal(short.noveltyTrend.status,'unavailable');assert.equal(short.noveltyTrend.ratePercent,null);
 });
 test('Filters, explicit selected menu types and serialization preserve summary scope and numbers',()=>{
   const {D,f,S}=summary(networkSheets({days:14}));const selected={...f,restaurants:new Set([0]),dishes:new Set([0])},a=E.networkSummary(D,selected);

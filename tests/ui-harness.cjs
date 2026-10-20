@@ -1,6 +1,7 @@
 const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path'),E=require('../src/engine.js');
 function createUI(data,savedView={}){
-  const nodes=new Map(),checks=[],tabs=['overview','dishes','restaurants','channels'].map(t=>({dataset:{tab:t},setAttribute(k,v){this[k]=v;}}));
+  let focusedTab=null;
+  const nodes=new Map(),checks=[],tabs=['overview','conclusions','dishes','restaurants','channels'].map(t=>({dataset:{tab:t},setAttribute(k,v){this[k]=v;},matches(s){return s==='[data-tab]';},click(){click({tab:t});},focus(){focusedTab=t;}}));
   class Node{
     constructor(id){this.id=id;this.dataset={};this.value='';this.style={};this.handlers={};this.classList={toggle(){}};this._html='';this._text='';}
     addEventListener(name,fn){this.handlers[name]=fn;}setAttribute(k,v){this[k]=v;}removeAttribute(k){delete this[k];}
@@ -12,6 +13,7 @@ function createUI(data,savedView={}){
   const box={document,window:{},MenuEngine:E,Intl,Date,Set,Map,JSON,Number,String,Math,console,setTimeout,clearTimeout,Blob,URL};vm.createContext(box);vm.runInContext(fs.readFileSync(path.resolve(__dirname,'../src/app.js'),'utf8'),box);
   const click=dataset=>{const button={dataset,hasAttribute(){return false;},closest(s){return s==='button'?this:null;}};document.click({target:button});};
   const control=(key,value)=>document.change({target:{dataset:{control:key},value}});
-  return {get,click,control,api:box.window.MenuDashboard};
+  const keyTab=(key,tab)=>{let prevented=false;get('.tabs').handlers.keydown({key,target:tabs.find(t=>t.dataset.tab===tab),preventDefault(){prevented=true;}});return {prevented,focusedTab};};
+  return {get,click,control,keyTab,tabs,api:box.window.MenuDashboard};
 }
 module.exports={createUI};

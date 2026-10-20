@@ -714,9 +714,9 @@ const MenuEngine = (() => {
     result.status='available';return result;
   }
   function noveltyWindows(D,H,f,ids){
-    if(!f.start||!f.end||f.start>f.end)return {status:'unavailable',reason:'invalid_period',previousStart:null,previousEnd:null,recentStart:null,recentEnd:null,days:7,dishCount:0,qtyPrevious:null,qtyRecent:null,change:null,percent:null,completeSelection:false};
+    if(!f.start||!f.end||f.start>f.end)return {status:'unavailable',reason:'invalid_period',previousStart:null,previousEnd:null,recentStart:null,recentEnd:null,days:7,dishCount:0,qtyPrevious:null,qtyRecent:null,change:null,percent:null,ratePrevious:null,rateRecent:null,rateChange:null,ratePercent:null,completeSelection:false};
     const end=[f.end,D.maxDate].sort()[0],recentStart=addDays(end,-6),previousEnd=addDays(recentStart,-1),previousStart=addDays(recentStart,-7);
-    const result={status:'unavailable',reason:'insufficient_windows',previousStart,previousEnd,recentStart,recentEnd:end,days:7,dishCount:0,qtyPrevious:null,qtyRecent:null,change:null,percent:null,completeSelection:false};
+    const result={status:'unavailable',reason:'insufficient_windows',previousStart,previousEnd,recentStart,recentEnd:end,days:7,dishCount:0,qtyPrevious:null,qtyRecent:null,change:null,percent:null,ratePrevious:null,rateRecent:null,rateChange:null,ratePercent:null,completeSelection:false};
     if(previousStart<f.start)return result;
     const mainSalesDates=new Set(D.history?.mainSalesDates||(D.menuSales||D.sales).map(s=>s[3])),mainOrderDates=new Set(D.orders.map(o=>o[2]));
     if(calendar(previousStart,end).some(dt=>!mainSalesDates.has(dt)||!mainOrderDates.has(dt)))return result;
@@ -735,6 +735,13 @@ const MenuEngine = (() => {
     if(!accepted.size){result.reason='no_common_composition';return result;}
     result.qtyPrevious=sum(previous.sales.filter(s=>accepted.has(pairKey(s))),s=>s[4]);result.qtyRecent=sum(recent.sales.filter(s=>accepted.has(pairKey(s))),s=>s[4]);
     result.change=result.qtyRecent-result.qtyPrevious;result.percent=result.qtyPrevious>0?100*result.change/result.qtyPrevious:null;
+    // Each suitable restaurant/channel/date base belongs to the union, once for all accepted dishes.
+    const acceptedPairs=new Set([...accepted].map(k=>k.slice(k.indexOf('|')+1)));
+    const orderBase=context=>sum(context.orderRecords.filter(([r,c])=>acceptedPairs.has(r+'|'+c)),o=>o[3]);
+    const previousOrders=orderBase(previous),recentOrders=orderBase(recent);
+    result.ratePrevious=previousOrders>0?100*result.qtyPrevious/previousOrders:null;result.rateRecent=recentOrders>0?100*result.qtyRecent/recentOrders:null;
+    result.rateChange=result.ratePrevious!==null&&result.rateRecent!==null?result.rateRecent-result.ratePrevious:null;
+    result.ratePercent=result.ratePrevious>0?100*result.rateChange/result.ratePrevious:null;
     result.dishCount=new Set([...accepted].map(k=>Number(k.split('|')[0]))).size;
     result.completeSelection=common.length===ids.length&&[...previous.sales,...recent.sales].every(s=>s[4]===0||accepted.has(pairKey(s)));
     result.status='available';result.reason=null;return result;
@@ -757,7 +764,7 @@ const MenuEngine = (() => {
       dishes:own.dishRows.map(row=>({id:row.id,name:row.name,group:row.group,type:row.type,hasData:row.orders>0||row.qty!==0,
         ...summaryMenu(D,f,{...own,qty:row.qty,rate:row.rate,sales:own.sales.filter(s=>s[0]===row.id)},rating,[row.id])})),
       dataIssues:[...new Set([...(!validPeriod?['invalid_period']:[]),...(!f.restaurants.size||!f.channels.size?['no_selection']:[]),...(own.missingOrderSales.length?['incomplete_orders']:[]),...launches.flatMap(l=>l.issues),...overall.reasons])],
-      possibleSubstitution:trend.status==='available'&&trend.completeSelection&&trend.change>0&&launches.length>0&&launches.every(l=>l.status==='available'&&l.excludedGroups.length===0&&l.change<=1e-9&&l.coverage.before.percent>=100-1e-9&&l.coverage.after.percent>=100-1e-9)};
+      possibleSubstitution:trend.status==='available'&&trend.completeSelection&&trend.rateChange>1e-9&&launches.length>0&&launches.every(l=>l.status==='available'&&l.excludedGroups.length===0&&l.change<=1e-9&&l.coverage.before.percent>=100-1e-9&&l.coverage.after.percent>=100-1e-9)};
   }
   return {buildDataset,parseXlsx,defaults,calculate,benchmark,benchmarkClassic,benchmarkWeighted,benchmarkBefore,networkSummary,dishDaily,weekly,addDays,diffDays,collator};
 })();
