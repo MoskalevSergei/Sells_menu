@@ -4,7 +4,7 @@ const box={DOMParser,JSZip,Intl,Date,Set,Map,JSON,Number,String,Math,console,mod
 const file=(bytes,name='Меню_Продажи_пример.xlsx')=>({name,arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)});
 test('Real XLSX ZIP/XML reader matches the synthetic source tables',async()=>{
   const sheets=demoSheets(),expected=E.buildDataset(sheets),actual=await E.parseXlsx(file(await workbookBytes(sheets),'Отчет_МЕНЮ_ПРОДАЖИ_пример.XLSX'));
-  for(const k of ['dishes','restaurants','channels','sales','orders','menuItems','menuSales','availability','menuAvailability','launchPairs'])assert.equal(JSON.stringify(actual[k]),JSON.stringify(expected[k]),k);
+  for(const k of ['dishes','restaurants','channels','sales','orders','menuItems','menuSales','availability','menuAvailability','launchPairs','fullGroupExtras'])assert.equal(JSON.stringify(actual[k]),JSON.stringify(expected[k]),k);
   assert.equal(actual.missingOrderSales.length,0);const a=E.calculate(actual,E.defaults(actual)),b=E.calculate(expected,E.defaults(expected));assert.equal(a.qty,b.qty);assert.equal(a.rate,b.rate);
   const changed=demoSheets(),sale=changed['Поток продаж'].find(r=>r[0]==='Новое блюдо 1');sale[5]+=10;
   const next=await E.parseXlsx(file(await workbookBytes(changed))),result=E.calculate(next,E.defaults(next));assert.equal(result.qty,a.qty+10);assert.equal(result.orders,a.orders);
@@ -82,4 +82,12 @@ test('New XLSX loads require the launch sheet and every SPR code, including dish
 test('Two launch sheets cannot silently override one another',async()=>{
   const sheets=demoSheets();sheets['Рестораны Блюдо']=sheets['Рестораны_Блюдо'];
   await assert.rejects(E.parseXlsx(file(await workbookBytes(sheets))),/Неоднозначные источники листа «Рестораны_Блюдо»/);
+});
+test('XLSX preserves known pre-launch group sales outside rating arrays and deduplicates their overlapping sources',async()=>{
+  const {networkSheets}=require('./network-fixture.cjs'),s=networkSheets();
+  const premature=['Новинка','Ресторан 0','Зал','2026-05-04','Группа',5];s['Поток продаж'].push([...premature]);s['Поток продаж_до'].push([...premature]);
+  const D=await E.parseXlsx(file(await workbookBytes(s))),S=E.networkSummary(D,E.defaults(D));
+  assert.equal(D.fullGroupExtras.main.length,1);assert.equal(D.fullGroupExtras.before.length,1);
+  assert.ok(!D.sales.some(r=>r[3]<'2026-05-05'));assert.ok(Math.abs(S.launches[0].beforeRate-(11+5/14000*100))<1e-8);
+  s['Поток продаж'].at(-1)[4]='Другая группа';await assert.rejects(E.parseXlsx(file(await workbookBytes(s))),/группа блюда не совпадает с СПР/);
 });
